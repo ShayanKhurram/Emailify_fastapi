@@ -316,7 +316,7 @@ async def chat_simple(message: str):
 if __name__ == "__agentic_rag__":
     import uvicorn
     uvicorn.run(
-        "main:app",  # Replace "main" with your filename if different
+        "agentic_rag:app",  # Replace "main" with your filename if different
         host="0.0.0.0",
         port=8000,
         reload=True,
