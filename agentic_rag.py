@@ -313,7 +313,7 @@ async def chat_simple(message: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Run the server
-if __name__ == "__agentic_rag__":
+if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "agentic_rag:app",  # Replace "main" with your filename if different
