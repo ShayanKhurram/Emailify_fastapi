@@ -7,4 +7,4 @@ google
 supabase
 httpx
 asyncio
-pydantic-ai=0.3.6
+pydantic-ai==0.3.6
