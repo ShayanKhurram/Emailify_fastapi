@@ -10,14 +10,13 @@ from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from openai import AsyncOpenAI
 from supabase import Client, create_client
 from google.genai import Client as GeminiClient
 from pydantic_ai.models.gemini import GeminiModel
-from pydantic_ai.mcp import MCPServerStdio, MCPServerSSE
 
 load_dotenv()
 
@@ -25,10 +24,12 @@ load_dotenv()
 agent_instance = None
 deps_instance = None
 
-@dataclass
-class PydanticAIDeps:
-    supabase: Client
-    gemini_client: GeminiClient
+class PydanticAIDeps(BaseModel):
+    """Dependencies for PydanticAI agent with arbitrary types allowed"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    supabase: Optional[Client] = None
+    gemini_client: Optional[GeminiClient] = None
 
 # Pydantic models for API requests/responses
 class AgentRequest(BaseModel):
@@ -45,7 +46,7 @@ class AgentResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     agent_ready: bool
-    mcp_servers_ready: bool
+    dependencies_ready: bool
 
 # Initialize agent and dependencies
 async def initialize_agent():
@@ -53,19 +54,32 @@ async def initialize_agent():
     
     try:
         # Initialize model
-        llm = os.getenv('LLM_MODEL', 'gemini-2.5-flash')
+        llm = os.getenv('LLM_MODEL', 'gemini-2.0-flash-exp')
         model = GeminiModel(llm)
         
         # Initialize clients
-        gemini_client = genai.Client()
+        gemini_client = None
+        supabase = None
         
-        # Initialize Supabase client
+        # Try to initialize Gemini client
+        try:
+            gemini_client = genai.Client()
+            print("Gemini client initialized successfully")
+        except Exception as e:
+            print(f"Warning: Failed to initialize Gemini client: {e}")
+        
+        # Try to initialize Supabase client
         supabase_url = os.getenv('SUPABASE_URL')
         supabase_key = os.getenv('SUPABASE_ANON_KEY')
-        if not supabase_url or not supabase_key:
-            raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY environment variables are required")
         
-        supabase = create_client(supabase_url, supabase_key)
+        if supabase_url and supabase_key:
+            try:
+                supabase = create_client(supabase_url, supabase_key)
+                print("Supabase client initialized successfully")
+            except Exception as e:
+                print(f"Warning: Failed to initialize Supabase client: {e}")
+        else:
+            print("Warning: SUPABASE_URL and SUPABASE_ANON_KEY not set")
         
         # Create dependencies
         deps_instance = PydanticAIDeps(
@@ -85,34 +99,22 @@ industry: The industry in which the lead's company operates
 lead_source: Where the lead was acquired from (e.g., LinkedIn, event, website)
 pain_point: A problem or challenge the lead is facing
 
-
-first of all, you need to understand the lead's pain points and how our website services can address them.
-so use website data to understand the lead's pain points and how our services can address them.
 Your job is to write a personalized cold or warm outreach email for each lead. The email should:
-Begin with a natural, personalized greeting (e.g., "Hi Sarah," or "Hello Mr. Khan,")
-Reference their job_title and company to show relevance.
-Address the specific pain_point they are facing, demonstrating understanding.
-Offer a solution or value proposition using the website info  that relates directly to the pain point. 
-Match the tone of the email with the lead_source:
-- Friendly/informal for social sources (e.g., social media, website)
-- Formal/professional for business sources (e.g., LinkedIn, conferences)
-End with a clear, polite call to action (e.g., suggesting a service from nyc charles).
+- Begin with a natural, personalized greeting
+- Reference their job_title and company to show relevance
+- Address the specific pain_point they are facing
+- Offer a solution or value proposition
+- End with a clear, polite call to action
 
-Respond only with the email content (including subject line and body), not with explanations or lead details.
-Do not generate emails for leads missing key fields (like email, job_title, or pain_point).
 Keep each email under 150 words, and ensure it feels custom-written.
 """
-        
-        # Initialize MCP server
-        mail_server = MCPServerSSE(url='https://email-mcp.onrender.com/sse')
         
         # Create agent
         agent_instance = Agent(
             model,
             system_prompt=system_prompt,
             deps_type=PydanticAIDeps,
-            retries=2,
-            mcp_servers=[mail_server]
+            retries=2
         )
         
         # Add tools to agent
@@ -123,29 +125,38 @@ Keep each email under 150 words, and ensure it feels custom-written.
         
     except Exception as e:
         print(f"Failed to initialize agent: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def add_tools_to_agent():
     """Add tools to the agent instance"""
     
     @agent_instance.tool
-    async def get_embedding(text: str, gemini_client: GeminiClient) -> List[float]:
+    async def get_embedding(text: str, ctx: RunContext[PydanticAIDeps]) -> List[float]:
         """Get embedding vector from Gemini."""
         try:
-            response = gemini_client.models.embed_content(
-                model="gemini-embedding-exp-03-07",
+            if not ctx.deps.gemini_client:
+                print("Gemini client not available")
+                return [0] * 768  # Default embedding size
+                
+            response = ctx.deps.gemini_client.models.embed_content(
+                model="text-embedding-004",
                 contents=text
             )
             return response.embeddings
         except Exception as e:
             print(f"Error getting embedding: {e}")
-            return [0] * 1536
+            return [0] * 768
 
     @agent_instance.tool
     async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_query: str) -> str:
         """Retrieve relevant website chunks based on the query with RAG."""
         try:
-            query_embedding = await get_embedding(user_query, ctx.deps.gemini_client)
+            if not ctx.deps.supabase:
+                return "Documentation retrieval not available (Supabase not configured)."
+                
+            query_embedding = await get_embedding(user_query, ctx)
             
             result = ctx.deps.supabase.rpc(
                 'match_site_pages',
@@ -178,6 +189,9 @@ def add_tools_to_agent():
     async def list_documentation_pages(ctx: RunContext[PydanticAIDeps]) -> List[str]:
         """Retrieve a list of all available website pages."""
         try:
+            if not ctx.deps.supabase:
+                return ["Documentation not available (Supabase not configured)"]
+                
             result = ctx.deps.supabase.from_('site_pages') \
                 .select('url') \
                 .eq('metadata->>source', 'the_charles_nyc_docs') \
@@ -197,6 +211,9 @@ def add_tools_to_agent():
     async def get_page_content(ctx: RunContext[PydanticAIDeps], url: str) -> str:
         """Retrieve the full content of a specific website page."""
         try:
+            if not ctx.deps.supabase:
+                return "Page content not available (Supabase not configured)."
+                
             result = ctx.deps.supabase.from_('site_pages') \
                 .select('title, content, chunk_number') \
                 .eq('url', url) \
@@ -226,7 +243,7 @@ async def lifespan(app: FastAPI):
     print("Starting up FastAPI server...")
     success = await initialize_agent()
     if not success:
-        raise RuntimeError("Failed to initialize agent")
+        print("Warning: Agent initialization failed, but continuing...")
     
     yield
     
@@ -247,7 +264,7 @@ async def root():
     return HealthResponse(
         status="healthy",
         agent_ready=agent_instance is not None,
-        mcp_servers_ready=True  # Simplified check
+        dependencies_ready=deps_instance is not None
     )
 
 @app.get("/health", response_model=HealthResponse)
@@ -256,7 +273,7 @@ async def health_check():
     return HealthResponse(
         status="healthy" if agent_instance else "unhealthy",
         agent_ready=agent_instance is not None,
-        mcp_servers_ready=True
+        dependencies_ready=deps_instance is not None
     )
 
 @app.post("/chat", response_model=AgentResponse)
@@ -264,30 +281,32 @@ async def chat_with_agent(request: AgentRequest):
     """Main endpoint to interact with the PydanticAI agent"""
     
     if not agent_instance:
-        raise HTTPException(status_code=500, detail="Agent not initialized")
+        return AgentResponse(
+            output="Agent not available. Please check environment variables and initialization.",
+            success=False,
+            error="Agent not initialized"
+        )
     
     try:
-        async with agent_instance.run_mcp_servers():
-            # Run the agent with the provided message
-            if request.use_message_history and request.message_history:
-                # Convert message history to the format expected by PydanticAI
-                result = await agent_instance.run(
-                    request.message,
-                    message_history=request.message_history,
-                    deps=deps_instance
-                )
-            else:
-                result = await agent_instance.run(
-                    request.message,
-                    deps=deps_instance
-                )
-            
-            return AgentResponse(
-                output=result.output,
-                success=True,
-                new_messages=result.new_messages() if hasattr(result, 'new_messages') else None
+        # Run the agent with the provided message
+        if request.use_message_history and request.message_history:
+            result = await agent_instance.run(
+                request.message,
+                message_history=request.message_history,
+                deps=deps_instance
             )
-            
+        else:
+            result = await agent_instance.run(
+                request.message,
+                deps=deps_instance
+            )
+        
+        return AgentResponse(
+            output=result.output,
+            success=True,
+            new_messages=result.new_messages() if hasattr(result, 'new_messages') else None
+        )
+        
     except Exception as e:
         print(f"Error running agent: {e}")
         return AgentResponse(
@@ -301,24 +320,33 @@ async def chat_simple(message: str):
     """Simplified endpoint that just takes a message string"""
     
     if not agent_instance:
-        raise HTTPException(status_code=500, detail="Agent not initialized")
+        return {
+            "response": "Agent not available. Please check environment variables and initialization.",
+            "error": "Agent not initialized"
+        }
     
     try:
-        async with agent_instance.run_mcp_servers():
-            result = await agent_instance.run(message, deps=deps_instance)
-            return {"response": result.output}
-            
+        result = await agent_instance.run(message, deps=deps_instance)
+        return {"response": result.output}
+        
     except Exception as e:
         print(f"Error running agent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"response": "Error occurred", "error": str(e)}
 
 # Run the server
 if __name__ == "__main__":
     import uvicorn
+    import os
+    
+    # Get port from environment variable (Render provides this)
+    port = int(os.environ.get("PORT", 8000))
+    
+    print(f"Starting server on port {port}")
+    
     uvicorn.run(
-        "agentic_rag:app",  # Replace "main" with your filename if different
+        app,  # Pass the app directly
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=port,
+        reload=False,
         log_level="info"
     )
