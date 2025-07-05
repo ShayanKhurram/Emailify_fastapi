@@ -182,3 +182,13 @@ async def health_check():
     return {"status": "healthy", "model": llm}
 
 # Run with: uvicorn your_filename:app --reload
+
+# Render.com specific configuration
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000)),  # Render provides PORT environment variable
+        log_level="info"
+    )
