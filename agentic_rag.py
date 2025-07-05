@@ -17,12 +17,15 @@ from openai import AsyncOpenAI
 from supabase import Client, create_client
 from google.genai import Client as GeminiClient
 from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.mcp import MCPServerSSE
 
 load_dotenv()
 
 # Global variables for agent and dependencies
 agent_instance = None
 deps_instance = None
+
+mail_server = MCPServerSSE(url='https://email-mcp.onrender.com/sse')  
 
 class PydanticAIDeps(BaseModel):
     """Dependencies for PydanticAI agent with arbitrary types allowed"""
@@ -54,7 +57,7 @@ async def initialize_agent():
     
     try:
         # Initialize model
-        llm = os.getenv('LLM_MODEL', 'gemini-2.0-flash-exp')
+        llm = os.getenv('LLM_MODEL', 'gemini-2.5-flash')
         model = GeminiModel(llm)
         
         # Initialize clients
@@ -113,6 +116,7 @@ Keep each email under 150 words, and ensure it feels custom-written.
         agent_instance = Agent(
             model,
             system_prompt=system_prompt,
+            mcp_servers=["mail_server"],
             deps_type=PydanticAIDeps,
             retries=2
         )
