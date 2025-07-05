@@ -105,7 +105,7 @@ async def get_embedding(text: str, gemini_client: AsyncOpenAI) -> List[float]:
 
 @pydantic_ai_expert.tool
 async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_query: str) -> str:
-    """Retrieve relevant documentation chunks with RAG."""
+    """Retrieve data similar to pain point from website """
     try:
         query_embedding = await get_embedding(user_query, ctx.deps.gemini_client)
         result = ctx.deps.supabase.rpc(
