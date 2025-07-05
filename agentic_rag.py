@@ -133,7 +133,7 @@ def add_tools_to_agent():
     """Add tools to the agent instance"""
     
     @agent_instance.tool
-    async def get_embedding(ctx: RunContext[PydanticAIDeps], text: str) -> List[float]:
+    async def get_embedding(text: str,ctx: RunContext[PydanticAIDeps]) -> List[float]:
         """Get embedding vector from Gemini."""
         try:
             if not ctx.deps.gemini_client:
@@ -141,7 +141,7 @@ def add_tools_to_agent():
                 return [0] * 768  # Default embedding size
                 
             response = ctx.deps.gemini_client.models.embed_content(
-                model="text-embedding-004",
+                model="gemini-embedding-exp-03-0",
                 contents=text
             )
             return response.embeddings
