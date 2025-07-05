@@ -45,7 +45,9 @@ industry: The industry in which the lead's company operates
 lead_source: Where the lead was acquired from (e.g., LinkedIn, event, website)
 pain_point: A problem or challenge the lead is facing
 
-Your job is to write a personalized cold or warm outreach email for each lead. The email should:
+Your job is to write a personalized cold or warm outreach email for each lead Use vmgroupe.com website data to offer them a solution for a pain point. First use the match documentation tool to check the similarity.  
+
+ The email should:
 - Begin with a natural, personalized greeting
 - Reference their job_title and company to show relevance
 - Address the specific pain_point they are facing
@@ -111,7 +113,7 @@ async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_
             {
                 'query_embedding': query_embedding,
                 'match_count': 5,
-                'filter': {'source': 'the_charles_nyc_docs'}
+                'filter': {'source': 'vmgroupe.com'}
             }
         ).execute()
         
@@ -130,11 +132,11 @@ async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_
 
 @pydantic_ai_expert.tool
 async def list_documentation_pages(ctx: RunContext[PydanticAIDeps]) -> List[str]:
-    """Retrieve list of all available documentation pages."""
+    """Retrieve list of all available website pages."""
     try:
         result = ctx.deps.supabase.from_('site_pages') \
             .select('url') \
-            .eq('metadata->>source', 'the_charles_nyc_docs') \
+            .eq('metadata->>source', 'vmgroupe.com') \
             .execute()
         return sorted(set(doc['url'] for doc in result.data))
     except Exception as e:
@@ -148,7 +150,7 @@ async def get_page_content(ctx: RunContext[PydanticAIDeps], url: str) -> str:
         result = ctx.deps.supabase.from_('site_pages') \
             .select('title, content, chunk_number') \
             .eq('url', url) \
-            .eq('metadata->>source', 'the_charles_nyc_docs') \
+            .eq('metadata->>source', 'vmgroupe.com') \
             .order('chunk_number') \
             .execute()
         
