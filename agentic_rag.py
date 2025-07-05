@@ -133,7 +133,7 @@ def add_tools_to_agent():
     """Add tools to the agent instance"""
     
     @agent_instance.tool
-    async def get_embedding(text: str, ctx: RunContext[PydanticAIDeps]) -> List[float]:
+    async def get_embedding(ctx: RunContext[PydanticAIDeps], text: str) -> List[float]:
         """Get embedding vector from Gemini."""
         try:
             if not ctx.deps.gemini_client:
